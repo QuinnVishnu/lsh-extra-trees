@@ -1,16 +1,15 @@
 import json
+import math
 import re
 import pandas as pd
 import numpy as np
 import random
 from sklearn.preprocessing import MultiLabelBinarizer
-from tqdm import tqdm
 import collections
 import itertools
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import f1_score
-from statistics import mean
 
 #Load the data
 f = open("TVs-all-merged.json")
@@ -113,28 +112,11 @@ for title in deleted_titles:
     validation_df = validation_df[validation_df.index != title]
 validation_df.reset_index(drop=True, inplace=True)
 
-def intersection_list(lst1, lst2):
-    list_intersec = [value for value in range(len(lst1)) if lst2[value] == 1 and lst1[value] == 1]
-    return list_intersec
-
-def union_list(lst1, lst2):
-    try:
-        list_union = lst1.value_counts()[1] + lst2.value_counts()[1] - len(intersection_list(lst1,lst2))
-    except:
-        print(lst1.value_counts())
-        print(lst2.value_counts())
-        print(lst1.value_counts()[1])
-        print(lst2.value_counts()[1])
-    return list_union
-
-def jaccardSim(d1,d2):
-    return len(intersection_list(d1,d2))/union_list(d1,d2)
-
 signature_matrix = np.full((len(df.columns), 150), np.inf)
 hash_functions = []
 #Set seed
 np.random.seed(20)
-for row in tqdm(range(len(df))):
+for row in range(len(df)):
     hash_row = []
     for i in range(150):
         np.random.seed(1)
@@ -151,6 +133,23 @@ for row in tqdm(range(len(df))):
                 if value < signature_matrix[column][i]:
                     signature_matrix[column][i] = value
 signmatrix = signature_matrix.transpose()
+
+def intersection_list(lst1, lst2):
+    list_intersec = [value for value in range(len(lst1)) if lst2[value] == 1 and lst1[value] == 1]
+    return list_intersec
+
+def union_list(lst1, lst2):
+    try:
+        list_union = lst1.value_counts()[1] + lst2.value_counts()[1] - len(intersection_list(lst1,lst2))
+    except:
+        print(lst1.value_counts())
+        print(lst2.value_counts())
+        print(lst1.value_counts()[1])
+        print(lst2.value_counts()[1])
+    return list_union
+
+def jaccardSim(d1,d2):
+    return len(intersection_list(d1,d2))/union_list(d1,d2)
 
 b=30
 r=5
@@ -191,14 +190,26 @@ print(classification_df['duplicate label'].value_counts())
 X = pd.DataFrame(columns=range(670))
 for index, lst in enumerate(classification_df.candidates):
         X.loc[index] = lst
-X.to_csv('X')
+X.to_csv('X.csv')
 Y = pd.Series(classification_df['duplicate label'].astype('int'))
 
-predictions = []
-#for bs in range(5):
 X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.37)
-ET = ExtraTreesClassifier(random_state=42, bootstrap=True).fit(X_train, Y_train)
-ypred = ET.predict(X_test)
-#finalprediction = mean(predictions)
-print(f'F1 Score:{f1_score(Y_test, ypred)}')
-breakpoint()
+base_estimator = ExtraTreesClassifier(random_state=42)
+param_grid = {'max_features': ['sqrt', 'None'],
+              'n_estimators': [100, 200, 500],
+              'criterion': ['gini', 'entropy']
+              }
+GS = GridSearchCV(base_estimator, param_grid, cv=5, scoring='accuracy')
+GS.fit(X_train, Y_train)
+print(f'Best parameters: {GS.best_params_}')
+
+f1score = []
+for bootstrap in range(10):
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.37)
+    ET = ExtraTreesClassifier(random_state=42, n_estimators=200,
+                              criterion='gini').fit(X_train, Y_train)
+    y_pred =ET.predict(X_test)
+    score = f1_score(Y_test, y_pred)
+    f1score.append(score)
+finalprediction = np.mean(f1score)
+print(finalprediction)

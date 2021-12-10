@@ -52,8 +52,10 @@ for pair in pairs_dict(data):
                 counts[word] = 1
         titles.append(title.lower())
 
+        #Create a validation dataframe to check if LSH pairs are true duplicates
         validation_df = validation_df.append({'model ID':model_id, 'title':title}, ignore_index=True)
 
+#Count the number of duplicate pairs in the dataset
 duplicate_pairs = 0
 valuecount = validation_df['model ID'].value_counts()
 for modelcount in valuecount:
@@ -103,6 +105,8 @@ mlb = MultiLabelBinarizer()
 df = pd.DataFrame({"titles": titles_split})
 df = pd.DataFrame(mlb.fit_transform(df['titles']), columns=mlb.classes_, index=df.index)
 df = df.transpose()
+
+#Delete titles that contain no words from df and validation_df
 deleted_titles = df.loc[:, (df == 0).all(axis=0)]
 df = df.loc[:, (df != 0).any(axis=0)]
 df = df.transpose()
@@ -112,9 +116,9 @@ for title in deleted_titles:
     validation_df = validation_df[validation_df.index != title]
 validation_df.reset_index(drop=True, inplace=True)
 
+#Create signature matrix
 signature_matrix = np.full((len(df.columns), 150), np.inf)
 hash_functions = []
-#Set seed
 np.random.seed(20)
 for row in range(len(df)):
     hash_row = []
@@ -134,6 +138,7 @@ for row in range(len(df)):
                     signature_matrix[column][i] = value
 signmatrix = signature_matrix.transpose()
 
+#Create functions to compute similarity
 def intersection_list(lst1, lst2):
     list_intersec = [value for value in range(len(lst1)) if lst2[value] == 1 and lst1[value] == 1]
     return list_intersec
@@ -151,6 +156,7 @@ def union_list(lst1, lst2):
 def jaccardSim(d1,d2):
     return len(intersection_list(d1,d2))/union_list(d1,d2)
 
+#Fix b en r for LSH
 b=30
 r=5
 n, d = signmatrix.shape
@@ -167,6 +173,7 @@ for bucket in hashbuckets.values():
         for pair in itertools.combinations(bucket, 2):
             candidate_pairs.add(pair)
 
+#Only keep pairs above the threshold
 lsh_pairs = set()
 threshold = (1/b)**(1/r)
 for tuple in candidate_pairs:
@@ -175,6 +182,7 @@ for tuple in candidate_pairs:
 print(lsh_pairs)
 print(len(lsh_pairs))
 
+#Create new dataframe for the Extra Trees input
 classification_df = pd.DataFrame(columns=['candidates', 'duplicate label'])
 for lshpair in lsh_pairs:
     array1 = df[lshpair[0]].to_list()
@@ -193,6 +201,7 @@ for index, lst in enumerate(classification_df.candidates):
 X.to_csv('X.csv')
 Y = pd.Series(classification_df['duplicate label'].astype('int'))
 
+#Use gridsearch for optimal parameters
 X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.37)
 base_estimator = ExtraTreesClassifier(random_state=42)
 param_grid = {'max_features': ['sqrt', 'None'],
@@ -203,6 +212,8 @@ GS = GridSearchCV(base_estimator, param_grid, cv=5, scoring='accuracy')
 GS.fit(X_train, Y_train)
 print(f'Best parameters: {GS.best_params_}')
 
+#Train the Extra Trees model and bootstrap 10 times for robustness
+#Average the results
 f1score = []
 for bootstrap in range(10):
     X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.37)
